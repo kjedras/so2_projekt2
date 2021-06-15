@@ -2,15 +2,17 @@
 #define SEAT_H
 
 #include <mutex>
+#include "Train.h"
+#include <condition_variable>
+#include <iostream>
 class Seat
 {
     public:
         Seat(int index);
         virtual ~Seat();
 
-        bool taken;
-        bool isTaken();
-        bool TryTake();
+        bool isfree;
+        bool IsFree();
         void Take();
         void Release();
         int index;
@@ -18,11 +20,18 @@ class Seat
         int passId;
         void SetPassId(int pid);
         int GetPassId();
+        void SetIsFree(bool s);
+
+        Train *train;
+        void SetTrain(Train *train);
+
+        std::mutex lock;
+        std::condition_variable cv;
 
     protected:
 
     private:
-        std::mutex lock;
+        
 };
 
 #endif // SEAT_H

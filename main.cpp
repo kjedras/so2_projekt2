@@ -3,119 +3,76 @@
 #include "Train.h"
 #include "Draw.h"
 #include "Seat.h"
+#include "Cashier.h"
 #include <thread>
 #include <mutex>
+#include <vector>
 #include <unistd.h>
 #include <atomic>
 #include <chrono>
 #include <ctime>
 #include <ncurses.h>
-#inlcude <queue>
 #include <condition_variable>
 
 #define numOfSeats 3
 
 using namespace std;
 
-std::atomic<bool> runningLoop;
-int trainLoad;
+std::atomic<bool> run(true);
 
-condition_variable cashierOccupiedSignal;
-condition_variable trainAwaySignal;
+Passenger *pass[10];
+thread *passThread;
 
-mutex cashierMutex;
-mutex travelingMutex;
-mutex boardMutex;
-mutex queueMutex;
-
-vector<Passenger*> pass;
-vector<thread> passThread;
-
-bool isTrainFull;
-bool isCashierOccupied;
-
-Draw *draw;
 Train *train;
 Cashier *cashier;
 Seat *seat[numOfSeats];
 
-void Finish() {
-
-    while(runningLoop) {
-
-        cbreak();
-        noecho();
-        char key = getch();
-        if (key == 'q') {
-
-            runningLoop = false;
-            cashierOccupiedSignal.notify_all();
-            trainAwaySignal.notify_all();
-
-        } else this_thread::sleep_for(chrono::milliseconds(50));
-
-    }
-}
-
-void Render() {
-
-    while(runningLoop) {
-
-        //TODO
-
-    }
+void ExitListener(std::atomic<bool>& run)
+{
+    while(run) this_thread::sleep_for(chrono::milliseconds(20));
+    cashier->cv.notify_all();
+    train->cv.notify_all();
+    for (int i = 0; i < numOfSeats; i++) seat[i]->cv.notify_all();
 }
 
 void CreateWindow() {
 
-    draw = new Draw();
     cashier = new Cashier();
 
     for (int i = 0; i<numOfSeats; i++) {
-        seat[i] = new Seat();
+        seat[i] = new Seat(i);
+        }
 
     train = new Train(numOfSeats);
 
 }
 
-void LifeCycle(int index){
+void LifeCycle(int index, std::atomic<bool>& run){
 
-    while(runningLoop) {
-        while(!pass[index]->HasTicket()){
-            if (isCashierOccupied) {
+    while(run) {
 
-                unique_lock<mutex> queueLock(queueMutex);
-                cashierOccupiedSignal.wait(queueLock)
-                buyTicket(index);
-                queueLock.unlock();
+        pass[index]->BuyTicket();
 
-            } else buyTicket(index);}
-        while(pass[index]->HasTicket()){
-
-            unique_lock<mutex> boardLock(boardMutex);
-
-            while(isTrainFull) trainAwaySignal.wait(boardLock);
-
-            if (seat[pass[index]->GetSeatNum()].TryTake()){
-                trainLoad++;
-            }
-            //boardLock.unlock()
+        if (pass[index]->HasTicket())
+            pass[index]->TakeASeat(seat[pass[index]->GetSeatNum()]);
 
     }
+
 }
 
 bool IsTrainFullyLoaded() {
 
-    return (trainLoad == train->GetCapacity());
+    if (train->GetPplCount() == numOfSeats)
+        return true;
+    else return false;
 
 }
 
 void CreatePassengers() {
-
     for (int i = 0; i < 10; i++) {
 
-        pass.push_back(new Passenger());
-        passThread.push_back(thread(LifeCycle, i));
+        pass[i] = new Passenger(i, cashier, train, &run);
+        passThread[i] = thread(LifeCycle, i, std::ref(run));
 
     }
 
@@ -123,7 +80,8 @@ void CreatePassengers() {
 
 void DestroyPassengers() {
 
-    for (int i = 0; i < passThread.size(); i++) {
+    for (int i = 0; i < 10; i++) {
+        cout<<i<<endl;
 
         passThread[i].join();
 
@@ -131,72 +89,45 @@ void DestroyPassengers() {
 
 }
 
-void buyTicket(int i) {
+void Travel(std::atomic<bool>& run) {
 
-    unique_lock<mutex> lockCashier(cashierMutex);
-
-    isCashierOccupied = true;
-
-    lockCashier.unlock();
-
-    pass[i]->SetSeatNum() = cashier->SellTicket();
-
-    pass[i]->TicketAquired(true);
-
-    isCashierOccupied = false;
-
-    cashierOccupiedSignal.notify_one();
-
-}
-
-void boardTrain(int i) {
-
-
-    /*
-    unique_lock<mutex> lockPass(boardMutex);
-    trainLoad++;
-    trainAwaySignal.wait(lockPass);
-    lockPass.unlock();
-    pass[i]->TicketAquired(false);
-    */
-}
-
-void Travel() {
-
-    while(runningLoop) {
-
+    while(run) {
         if(IsTrainFullyLoaded()) {
-
-            //unique_lock<mutex> lockTrain(travelingMutex);
-
-            isTrainFull = true;
-
-            //lockTrain.unlock();
-
-            train->Travel();
-            trainLoad = 0;
-            isTrainFull = false;
-            for (int i = 0; i < numOfSeats; i++){
-                seat[i]->Release();
-                pass[seat[i]->GetPassId()]->TicketAquired(false);
+            for (int i = 0; i < 3; i++) {
+                pass[seat[i]->GetPassId()]->SetState("-----#TRAVELING-----");
             }
-            trainAwaySignal.notify_all();
+            train->Travel();
+            for (int i = 0; i < 3; i++) {
+                pass[seat[i]->GetPassId()]->SetState("-#LEAVING THE TRAIN-");
+            }
+            this_thread::sleep_for(chrono::seconds(1));
+            train->SetIsBack(false);
+            train->SetPplCount(0);
+
+
+            for (int i = 0; i < 3; i++) {
+                seat[i]->SetIsFree(true);
+            }
+
         }
     }
 }
 
-int main(int argc, char *argv[])
+int main()
 {
-    initscr();
     CreateWindow();
-    thread scene(Render);
-    thread train(Travel);
+    passThread  = new thread[10];
+    thread trainTh(Travel, std::ref(run));
+    thread exitTh(ExitListener, std::ref(run));
     CreatePassengers();
-    thread exitProgram(Exit);
-    scene.join();
-    train.join();
-    exitProgram.join();
+    Draw draw = Draw(10, pass);
+    draw.DrawScene();
+    run.store(false);
+    cout<<"Zamykanie 1"<<endl;
+    trainTh.join();
+    cout<<"Zamykanie 2"<<endl;
     DestroyPassengers();
-
+    exitTh.join();
+    cout<<"Koniec"<<endl;
     return 0;
 }

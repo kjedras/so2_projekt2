@@ -3,7 +3,8 @@
 Seat::Seat(int index)
 {
     this->index = index;
-    taken = false;
+    isfree = true;
+    cv.notify_all();
     //ctor
 }
 
@@ -12,20 +13,21 @@ Seat::~Seat()
     //dtor
 }
 
-bool Seat::IsTaken(){
-    return taken;
+bool Seat::IsFree(){
+    return isfree;
+}
+
+void Seat::SetIsFree(bool s) {
+    isfree = s;
 }
 
 void Seat::Take(){
-    taken = true;
-}
-
-bool Seat::TryTake(){
-    return lock.try_lock();
+    
+    //TODO
 }
 
 void Seat::Release(){
-    lock.unlock();
+    cv.notify_one();
 }
 
 void Seat::SetPassId(int pid) {
@@ -34,4 +36,10 @@ void Seat::SetPassId(int pid) {
 
 int Seat::GetPassId(){
     return passId;
+}
+
+void Seat::SetTrain(Train *train){
+
+    this->train = train;
+
 }
